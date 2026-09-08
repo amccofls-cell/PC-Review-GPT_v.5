@@ -48,44 +48,77 @@ def check_basic_info(value_a, value_b):
     return STATUS_FIX, f"표기 불일치 — 비교표: 「{str(value_a).strip()[:60]}」 / 원문: 「{str(value_b).strip()[:60]}」"
 
 
+def _normalize_num(num_raw):
+    try:
+        return float(str(num_raw).replace(",", ""))
+    except ValueError:
+        return None
+
+
+# 한국어/영문 단위를 비교용 표준 단위로 통일한다.
+UNIT_CANON = {
+    "마이크로그램": "mcg", "μg": "mcg", "ug": "mcg", "mcg": "mcg",
+    "밀리그램": "mg", "mg": "mg", "그램": "g", "g": "g",
+    "밀리리터": "ml", "ml": "ml", "l": "l", "iu": "iu", "단위": "unit",
+    "%": "%", "정": "정", "캡슐": "캡슐", "회": "회", "일": "일",
+    "시간": "시간", "분": "분", "초": "초", "주": "주", "개월": "개월", "세": "세",
+}
+
+# 숫자 + 단위뿐 아니라 1일 2회, 30분, 18세, 4시간 같은 임상 핵심 숫자를 잡는다.
+_UNIT_TOKEN = re.compile(
+    r"(?<![A-Za-z가-힣0-9])([0-9]+(?:[,.][0-9]+)?)\s*"
+    r"(마이크로그램|μg|ug|mcg|밀리그램|mg|그램|g|밀리리터|mL|ml|L|IU|iu|단위|정|캡슐|회|일|시간|분|초|주|개월|세|%)"
+    r"(?![A-Za-z가-힣0-9])",
+    re.I,
+)
+_SKIP_UNITS = {"형", "상", "번"}
+
+
 def extract_number_units(text):
-    """
-    '숫자+단위' 토큰 추출: [("500","mg"), ("1","정"), ...] 형태.
-    단위가 없거나 노이즈 단위(형/상/번)인 순수 숫자는 제외.
-    """
     tokens = []
     for m in _UNIT_TOKEN.finditer(str(text or "")):
-        num_raw, unit = m.group(1), m.group(2).lower().strip()
-        unit = re.sub(r"[^a-z가-힣%]", "", unit)
-        if not unit or unit in _SKIP_UNITS:
-            continue
-        try:
-            num = float(num_raw.replace(",", ""))
-        except ValueError:
+        num = _normalize_num(m.group(1))
+        raw_unit = m.group(2).lower()
+        unit = UNIT_CANON.get(raw_unit, raw_unit)
+        if num is None or unit in _SKIP_UNITS:
             continue
         tokens.append((num, unit))
     return tokens
 
 
+def _unique_tokens(tokens):
+    out = []
+    for token in tokens:
+        if token not in out:
+            out.append(token)
+    return out
+
+
 def compare_number_units(value_a, value_b):
-    """
-    양쪽 '숫자+단위' 토큰을 단위별로 비교.
-    같은 단위가 양쪽에 있고 숫자가 다른 토큰이 있으면 수정필요 사유 리스트 반환.
+    """숫자/단위의 '존재 여부'를 비교하되, 원문 전체의 동일 단위 숫자 때문에 오탐하지 않도록 한다.
+
+    - 비교표의 숫자+단위가 원문에 동일하게 존재하면 통과 후보
+    - 동일 단위만 있고 값이 다르면 수정 후보
+    - 비교표가 원문의 일부를 요약한 것은 허용(원문에 없는 숫자만 경고)
+    - 최종 의미 판정은 Claude가 담당
     """
     if value_b is None or not str(value_b).strip():
-        return None  # 원문 없음 → 참조 불가 (호출부에서 확인불가 처리)
-    ta = extract_number_units(value_a)
-    tb = extract_number_units(value_b)
-    if not ta and not tb:
+        return None
+    ta = _unique_tokens(extract_number_units(value_a))
+    tb = _unique_tokens(extract_number_units(value_b))
+    if not ta:
         return []
     issues = []
     for num_a, unit_a in ta:
         same_unit = [(n, u) for n, u in tb if u == unit_a]
         if not same_unit:
-            issues.append(f"비교표의 '{_fmt(num_a, unit_a)}'가 원문에 없음(누락/추가 의심)")
+            issues.append(f"비교표의 '{_fmt(num_a, unit_a)}'에 해당하는 원문 숫자·단위가 없음")
             continue
         if all(n != num_a for n, _ in same_unit):
-            issues.append(f"단위 {unit_a}: 비교표 {_fmt(num_a, unit_a)} vs 원문 {', '.join(_fmt(n, u) for n, u in same_unit)}")
+            # 동일 단위의 후보가 하나뿐이거나, 명확히 다른 숫자만 존재할 때만 자동 경고.
+            vals = sorted({n for n, _ in same_unit})
+            shown = ", ".join(_fmt(n, unit_a) for n in vals[:6])
+            issues.append(f"단위 {unit_a}: 비교표 {_fmt(num_a, unit_a)} vs 원문 {shown}")
     return issues
 
 
@@ -94,17 +127,12 @@ def _fmt(num, unit):
 
 
 def check_numeric_field(value_a, value_b):
-    """
-    서술형 항목의 숫자·단위만 기계 검사.
-    반환: (status, reason) — 숫자 불일치 없으면 Claude 확인 필요로 넘긴다(명세서 7장).
-    """
     if value_b is None or not str(value_b).strip():
         return STATUS_UNKNOWN, "원문(MFDS)이 없어 비교할 수 없습니다."
     issues = compare_number_units(value_a, value_b)
     if issues:
-        return STATUS_FIX, "숫자·단위 불일치: " + " / ".join(issues[:3])
-    return STATUS_CLAUDE, "숫자·단위는 일치. 의미 비교는 Claude 웹에서 검증하세요."
-
+        return STATUS_FIX, "숫자·단위 불일치 후보: " + " / ".join(issues[:3])
+    return STATUS_CLAUDE, "숫자·단위상 명확한 불일치는 확인되지 않음. 의미 비교는 Claude에서 검증하세요."
 
 def parse_price(value):
     """비교표 약가 셀에서 숫자 금액 추출. 없으면 None."""

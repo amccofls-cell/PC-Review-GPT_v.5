@@ -185,3 +185,43 @@ def build_field_prompt(field, products):
 def build_basic_info_prompt(products):
     """기본정보(제품명/성분명/제조판매사/제형 등)만 추린 프롬프트."""
     return build_field_prompt("기본정보", products)
+
+
+def build_grouped_prompt(group_records):
+    """비교표의 한 제품열을 동일 제품군(여러 함량) 단위로 검증하는 프롬프트.
+
+    group_records 예:
+      {"table_label": "Fentora buccal tab", "group_label": "비교의약품2",
+       "match_method": "ordinal", "products": [...], "pairs": [...]}
+    """
+    parts = [PROMPT_ROLE]
+    parts.append("""[핵심 검증 원칙]
+- 비교표의 한 제품 열은 동일 제품의 여러 함량을 한 셀에 묶어 요약할 수 있다.
+- 따라서 개별 함량 품목 하나와 비교표 전체 셀을 1:1 문자열 비교하지 말고, 해당 제품군에 포함된 모든 MFDS 원문을 함께 고려하라.
+- 비교표가 원문을 간결하게 요약한 경우 핵심 의미가 보존되면 일치 또는 표현차이로 판단하라.
+- 원문에 없는 조건/수치/대상군을 추가하거나, 임상적으로 중요한 제한조건을 삭제하여 의미가 넓어지면 수정필요다.
+- 숫자·단위·횟수·간격·기간·연령·최대용량은 특히 엄격하게 확인하라.
+- 제공된 원문에 없는 사실은 일반 지식으로 보완하지 말고 확인불가로 판단하라.""")
+    parts.append("[검증 대상 제품군]")
+    for g in group_records:
+        parts.append(f"--- 비교표 제품열: {g.get('table_label','')} / 연결 그룹: {g.get('group_label','')} / 연결 방식: {g.get('match_method','')} ---")
+        for p in g.get("products", []):
+            label = p.get("prompt_label") or p.get("item_name") or p.get("label") or "품목"
+            parts.append(f"[MFDS 품목] {label}")
+            parts.append(mfds_api.detail_to_raw_text(p.get("detail") or {"error": "MFDS 조회 실패(데이터 없음)"}))
+        parts.append("[HIRA 약가정보]")
+        parts.append(_hira_text(g.get("hira_rows")))
+        parts.append("[심의자료 비교표 해당 열]")
+        parts.append(_table_pairs_text(g.get("pairs", [])))
+    parts.append("""[검증 요청]
+각 비교표 제품열의 각 항목을 연결된 제품군의 MFDS 원문과 비교하라.
+특히 다음을 구분하라.
+1. 일치: 핵심 의미와 조건이 원문과 일치
+2. 표현차이: 표현만 다르고 의미가 동일
+3. 수정필요: 중요한 조건·수치·범위가 달라짐, 원문에 없는 내용이 추가됨, 또는 중요한 조건이 누락됨
+4. 확인필요: 자료만으로 명확한 판단이 어려움
+5. 확인불가: 공식 원문에서 근거를 확인하지 못함
+
+제품군 연결 방식이 '비교표 열 순서로 매칭(확인 권장)'인 경우 제품 식별도 함께 주의해서 확인하라.""")
+    parts.append("[출력 형식]\n| 제품열 | 연결그룹 | 항목 | 판단 | 이유 | 원문 근거 |")
+    return "\n".join(parts)
