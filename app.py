@@ -29,7 +29,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from modules import cache_store, claude_prompt_builder, clipboard_parser, drug_matcher, grouping, group_resolver
+from modules import cache_store, claude_prompt_builder, clipboard_parser, drug_matcher, grouping
 from modules import hira_api, mfds_api, pptx_parser, result_parser, rule_validator
 from modules import table_normalizer as normalizer
 from modules import xlsx_parser
@@ -317,14 +317,20 @@ def render_resizable_wrapped_table(display_df, show_index=False, height=720, tab
     table_width_css = "width:100%;" if show_index else "width:max-content; min-width:100%;"
     markup = f"""
     <style>
-      html, body {{ margin:0; padding:0; background:#fff; font-family:Arial, sans-serif; }}
+      html, body {{ margin:0; padding:0; background:#fff; color:#1f2937; font-family:Arial, sans-serif; }}
       .table-wrap {{ width:100%; height:calc(100vh - 24px); overflow:auto; border:1px solid #d9dee7; }}
       table {{ border-collapse:collapse; table-layout:fixed; {table_width_css} font-size:13px; }}
-      th, td {{ border:1px solid #d9dee7; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
-      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; font-weight:700; text-align:left; user-select:none; }}
+      th, td {{ border:1px solid #d9dee7; color:#1f2937; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
+      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; color:#111827; font-weight:700; text-align:left; user-select:none; }}
       .resize-handle {{ position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:3; }}
       .resize-handle:hover, .resizing {{ background:#5b8def; opacity:.55; }}
       body.resizing {{ cursor:col-resize; user-select:none; }}
+      @media (prefers-color-scheme: dark) {{
+        html, body {{ background:#171b1f; color:#f3f4f6; }}
+        .table-wrap {{ border-color:#3b424a; }}
+        th, td {{ border-color:#3b424a; color:#e5e7eb; }}
+        th {{ background:#252b31; color:#f9fafb; }}
+      }}
     </style>
     <div class="table-wrap" id="wrap-{table_key}">
       <table id="table-{table_key}"><colgroup>{colgroup}</colgroup><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_html)}</tbody></table>
@@ -555,7 +561,7 @@ init_group_state()
 # ---------------- v5.0 UI / UX ----------------
 st.markdown("""
 <style>
-:root {
+ :root {
   --brand:#315C55;
   --brand-2:#477A70;
   --ink:#1F2937;
@@ -563,11 +569,11 @@ st.markdown("""
   --line:#E6E8EC;
   --surface:#FFFFFF;
   --surface-2:#F7F8FA;
-  --warn:#B7791F;
+  --warn:#9A6700;
   --danger:#B42318;
   --ok:#13795B;
 }
-.stApp { background:#F6F7F9; }
+.stApp { background:#F6F7F9; color:var(--ink); }
 .block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
 [data-testid="stSidebar"] { background:#F1F3F2; border-right:1px solid #E1E5E3; }
 [data-testid="stSidebar"] .block-container { padding-top:1.25rem; }
@@ -578,20 +584,31 @@ div[data-testid="stMetric"] {
   padding:14px 16px; box-shadow:0 1px 2px rgba(16,24,40,.04);
 }
 div[data-testid="stMetricLabel"] { color:var(--muted); }
+div[data-testid="stMetricValue"] { color:var(--ink); }
 div.stButton > button {
   border-radius:10px; min-height:42px; font-weight:650; border:1px solid #D0D5DD;
+  background:var(--surface); color:var(--ink);
 }
 div.stButton > button[kind="primary"] {
   background:var(--brand); border-color:var(--brand); color:#fff;
 }
 div[data-testid="stExpander"] {
-  border:1px solid var(--line); border-radius:12px; background:#fff;
+  border:1px solid var(--line); border-radius:12px; background:var(--surface);
 }
 div[data-testid="stFileUploader"] {
-  border:1px dashed #C9CFD6; border-radius:12px; background:#fff;
+  border:1px dashed #C9CFD6; border-radius:12px; background:var(--surface);
+}
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input {
+  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
+}
+div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
 }
 .step-card {
-  background:#fff; border:1px solid var(--line); border-radius:14px;
+  background:var(--surface); border:1px solid var(--line); border-radius:14px;
   padding:16px 18px; margin:0 0 12px 0;
 }
 .step-kicker { color:var(--brand); font-size:12px; font-weight:800; letter-spacing:.08em; }
@@ -601,7 +618,57 @@ div[data-testid="stFileUploader"] {
 .status-warn { color:var(--warn); font-weight:700; }
 .status-danger { color:var(--danger); font-weight:700; }
 .small-note { color:var(--muted); font-size:12px; }
-</style>
+
+/* 브라우저/OS 다크 모드 대응: 앱 자체가 브라우저의 색상 선호를 따라감 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand:#79B8AC;
+    --brand-2:#8BC8BB;
+    --ink:#F3F4F6;
+    --muted:#AEB7C2;
+    --line:#3A424B;
+    --surface:#20252B;
+    --surface-2:#171B20;
+    --warn:#F2C66D;
+    --danger:#FF8A80;
+    --ok:#6FD3AF;
+  }
+  .stApp { background:#171B20; color:var(--ink); }
+  [data-testid="stSidebar"] { background:#1D2228; border-right-color:#343B43; }
+  h1, h2, h3, h4, h5, h6,
+  p, label, span, div { color:inherit; }
+  div[data-testid="stMetric"] {
+    background:var(--surface); border-color:var(--line);
+    box-shadow:0 1px 2px rgba(0,0,0,.25);
+  }
+  div.stButton > button {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+  }
+  div.stButton > button[kind="primary"] {
+    background:#356B61; border-color:#356B61; color:#fff;
+  }
+  div[data-testid="stExpander"],
+  div[data-testid="stFileUploader"],
+  .step-card {
+    background:var(--surface); border-color:var(--line);
+  }
+  div[data-testid="stTextInput"] input,
+  div[data-testid="stTextArea"] textarea,
+  div[data-testid="stNumberInput"] input {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+    caret-color:#F3F4F6;
+  }
+  div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+  div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+  }
+  input::placeholder, textarea::placeholder { color:#8D98A5 !important; }
+  [data-testid="stMarkdownContainer"] a { color:#8BC8BB; }
+  .step-kicker { color:#8BC8BB; }
+  .status-ok { color:#6FD3AF; }
+  .status-warn { color:#F2C66D; }
+  .status-danger { color:#FF8A80; }
+}</style>
 """, unsafe_allow_html=True)
 
 def reset_review():
@@ -1100,89 +1167,21 @@ if _SS["table"] is not None:
     if pairs:
         st.dataframe(pd.DataFrame(pairs), use_container_width=True)
 
-    # 비교표의 제품열과 조회된 제품군을 사용자가 최종 확인할 수 있게 한다.
-    # 특히 한 열에 여러 함량을 묶는 PPT/Excel 표는 개별 품목 1건으로 연결하면 오판할 수 있다.
-    st.markdown("### 🔗 비교표 제품열 ↔ 조회 제품군 연결")
-    table_labels = []
-    role_by_label = {}
-    for pair in pairs:
-        label = str(pair.get("product", "")).strip()
-        if label and label not in table_labels:
-            table_labels.append(label)
-        if label and pair.get("product_role"):
-            role_by_label.setdefault(label, pair.get("product_role"))
-
-    if _SS.get("products") and table_labels:
-        products = _SS["products"]
-        suggested = group_resolver.resolve_columns(table_labels, products, role_by_label=role_by_label)
-        group_ids = [p.get("group_id") for p in products if p.get("group_id")]
-        group_ids = list(dict.fromkeys(group_ids))
-        group_options = [""] + group_ids
-        selected_map = {}
-        cols = st.columns(min(max(len(table_labels), 1), 4))
-        for idx, label in enumerate(table_labels):
-            sug = suggested.get(label, {})
-            default_gid = sug.get("group_id") or ""
-            if default_gid not in group_options:
-                default_gid = ""
-            with cols[idx % len(cols)]:
-                option = st.selectbox(
-                    label, group_options,
-                    index=group_options.index(default_gid),
-                    format_func=lambda gid: "— 매칭 안 함 —" if not gid else group_resolver.group_label(products, gid),
-                    key=f"table_group_map_{idx}",
-                    help=(f"자동 제안: {sug.get('method','없음')}" if sug else "자동 매칭하지 못했습니다."),
-                )
-                selected_map[label] = option
-                if sug.get("method"):
-                    st.caption(f"자동 제안: {sug['method']}")
-        # UI에서 확인/수정한 매핑을 최종 검증에 사용한다.
-        _SS["table_group_map"] = {
-            label: {
-                "group_id": gid or None,
-                "confidence": "manual" if gid else "none",
-                "method": "사용자 확인/선택" if gid else "매칭 안 함",
-                "label": label,
-            } for label, gid in selected_map.items()
-        }
-
 # ============ ⑤ 1차 자동 검증 ============
 step_header("05", "Python 1차 자동 검증", "기본정보·숫자/단위·약가처럼 기계적으로 확실한 항목만 자동 판정합니다.")
 if _SS.get("products") and _SS.get("pairs"):
     if st.button("🔍 1차 규칙 검증 실행 (기본정보·숫자단위·약가만)", key="validate_btn"):
         products = _SS["products"]
         validation = []
-        table_labels = [p.get("product", "") for p in _SS["pairs"] if p.get("product", "")]
-        role_by_label = {}
-        for p in _SS["pairs"]:
-            if p.get("product") and p.get("product_role"):
-                role_by_label.setdefault(p.get("product"), p.get("product_role"))
-        column_map = group_resolver.resolve_columns(table_labels, products, role_by_label=role_by_label)
-        _SS["table_group_map"] = column_map
         for pair in _SS["pairs"]:
-            table_label = str(pair.get("product", ""))
-            mapping = column_map.get(table_label, {"group_id": None, "confidence": "none", "method": "매칭 실패"})
-            gid = mapping.get("group_id")
-            group_products = [p for p in products if str(p.get("group_id") or "") == str(gid)] if gid else []
-            field = pair.get("field", "")
-            # 비교표 한 셀은 동일 제품의 여러 함량을 요약할 수 있으므로 그룹 전체 원문을 사용한다.
-            refs = [mfds_reference_text(p.get("detail"), field) for p in group_products]
-            refs = [str(x).strip() for x in refs if x and str(x).strip()]
-            ref = "\n\n--- 동일 제품군 내 다른 함량 ---\n\n".join(refs) if refs else None
-            hira_prices = [p.get("price") for p in group_products if p.get("price") is not None]
-            hira_price = min(hira_prices) if field == "약가" and hira_prices else (hira_prices[0] if hira_prices else None)
-            if not gid:
-                status, reason = rule_validator.STATUS_UNKNOWN, "비교표 제품열을 선택된 제품군에 자동 연결하지 못했습니다. 제품군 연결을 확인하세요."
-            elif mapping.get("confidence") == "ordinal":
-                # 순서 기반 연결은 자동 오류판정을 하지 않고 확인 단계로 보낸다.
-                status, reason = rule_validator.STATUS_CLAUDE, "비교표 제품열과 제품군을 열 순서로 연결했습니다. 연결 대상 확인 후 Claude에서 검증하세요."
-            else:
-                status, reason = rule_validator.evaluate_pair(pair, ref, hira_price)
+            product = resolve_product(pair, products)
+            ref = mfds_reference_text(product["detail"] if product else None, pair.get("field", ""))
+            hira_price = product["price"] if product else None
+            status, reason = rule_validator.evaluate_pair(pair, ref, hira_price)
             validation.append({
-                "제품열(비교표)": table_label,
-                "연결 제품군": (f"{mapping.get('group_id')} / {group_resolver.group_label(products, gid)}" if gid else "❌ 제품군 매칭 안 됨"),
-                "연결 방식": mapping.get("method", ""),
-                "항목": field,
+                "제품(비교표)": pair.get("product", ""),
+                "연결 제품": (f"{product.get('group_label')} / {product.get('strength')} / {product.get('item_name')}" if product else "❌ 원문 매칭 안 됨"),
+                "항목": pair.get("field", ""),
                 "1차 판정": status,
                 "사유": reason,
             })
@@ -1208,35 +1207,9 @@ if _SS.get("products") and _SS.get("pairs"):
             "hira_rows": p["hira_rows"],
             "pairs": pairs_for_product(p, _SS["pairs"], products),
         })
-    # 비교표 제품열 단위로 그룹을 묶어, 여러 함량을 하나의 제품군으로 검증한다.
-    table_labels = [p.get("product", "") for p in _SS["pairs"] if p.get("product", "")]
-    if not _SS.get("table_group_map"):
-        role_by_label = {}
-        for pair in _SS["pairs"]:
-            if pair.get("product") and pair.get("product_role"):
-                role_by_label.setdefault(pair.get("product"), pair.get("product_role"))
-        _SS["table_group_map"] = group_resolver.resolve_columns(table_labels, products, role_by_label=role_by_label)
-    column_map = _SS["table_group_map"]
-    grouped_records = []
-    for table_label, mapping in column_map.items():
-        gid = mapping.get("group_id")
-        gp = [p for p in products if str(p.get("group_id") or "") == str(gid)] if gid else []
-        gpairs = [pair for pair in _SS["pairs"] if pair.get("product", "") == table_label]
-        hira_rows = []
-        for p in gp:
-            hira_rows.extend(p.get("hira_rows") or [])
-        grouped_records.append({
-            "table_label": table_label,
-            "group_label": group_resolver.group_label(products, gid) if gid else "매칭 실패",
-            "match_method": mapping.get("method", "매칭 실패"),
-            "products": gp,
-            "hira_rows": hira_rows,
-            "pairs": gpairs,
-        })
-    full_prompt = claude_prompt_builder.build_grouped_prompt(grouped_records)
+    full_prompt = claude_prompt_builder.build_full_prompt(prompt_products)
 
-    st.markdown("### ⭐ 제품군별 검증 자료 (비교표 열 ↔ 동일 제품의 전체 함량 원문)")
-    st.caption("한 비교표 열을 개별 함량 품목 하나와 잘못 연결하지 않도록, 동일 제품군의 여러 함량 원문을 함께 제공합니다.")
+    st.markdown("### 전체 자료 (전 제품 × MFDS 원문 + HIRA 약가정보 + 비교표)")
     cp1, cp2 = st.columns([1, 1])
     with cp1:
         copy_button(full_prompt, "📋 Claude용 전체 자료 복사")
@@ -1248,16 +1221,8 @@ if _SS.get("products") and _SS.get("pairs"):
             mime="text/plain",
             use_container_width=True,
         )
-    with st.expander("제품군별 전체 자료 미리보기"):
+    with st.expander("전체 자료 미리보기"):
         st.code(full_prompt)
-
-    st.markdown("### 제품군 연결 확인")
-    if grouped_records:
-        map_df = pd.DataFrame([{
-            "비교표 제품열": g["table_label"], "연결 제품군": g["group_label"], "연결 방식": g["match_method"],
-            "함량 수": len(g["products"]), "상태": "확인 권장" if "확인" in g["match_method"] else "자동연결"
-        } for g in grouped_records])
-        st.dataframe(map_df, use_container_width=True)
 
     st.markdown("### 제품별 자료")
     for p in prompt_products:
