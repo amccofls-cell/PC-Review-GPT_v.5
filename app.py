@@ -317,14 +317,20 @@ def render_resizable_wrapped_table(display_df, show_index=False, height=720, tab
     table_width_css = "width:100%;" if show_index else "width:max-content; min-width:100%;"
     markup = f"""
     <style>
-      html, body {{ margin:0; padding:0; background:#fff; font-family:Arial, sans-serif; }}
+      html, body {{ margin:0; padding:0; background:#fff; color:#1f2937; font-family:Arial, sans-serif; }}
       .table-wrap {{ width:100%; height:calc(100vh - 24px); overflow:auto; border:1px solid #d9dee7; }}
       table {{ border-collapse:collapse; table-layout:fixed; {table_width_css} font-size:13px; }}
-      th, td {{ border:1px solid #d9dee7; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
-      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; font-weight:700; text-align:left; user-select:none; }}
+      th, td {{ border:1px solid #d9dee7; color:#1f2937; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
+      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; color:#111827; font-weight:700; text-align:left; user-select:none; }}
       .resize-handle {{ position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:3; }}
       .resize-handle:hover, .resizing {{ background:#5b8def; opacity:.55; }}
       body.resizing {{ cursor:col-resize; user-select:none; }}
+      @media (prefers-color-scheme: dark) {{
+        html, body {{ background:#171b1f; color:#f3f4f6; }}
+        .table-wrap {{ border-color:#3b424a; }}
+        th, td {{ border-color:#3b424a; color:#e5e7eb; }}
+        th {{ background:#252b31; color:#f9fafb; }}
+      }}
     </style>
     <div class="table-wrap" id="wrap-{table_key}">
       <table id="table-{table_key}"><colgroup>{colgroup}</colgroup><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_html)}</tbody></table>
@@ -555,7 +561,7 @@ init_group_state()
 # ---------------- v5.0 UI / UX ----------------
 st.markdown("""
 <style>
-:root {
+ :root {
   --brand:#315C55;
   --brand-2:#477A70;
   --ink:#1F2937;
@@ -563,11 +569,11 @@ st.markdown("""
   --line:#E6E8EC;
   --surface:#FFFFFF;
   --surface-2:#F7F8FA;
-  --warn:#B7791F;
+  --warn:#9A6700;
   --danger:#B42318;
   --ok:#13795B;
 }
-.stApp { background:#F6F7F9; }
+.stApp { background:#F6F7F9; color:var(--ink); }
 .block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
 [data-testid="stSidebar"] { background:#F1F3F2; border-right:1px solid #E1E5E3; }
 [data-testid="stSidebar"] .block-container { padding-top:1.25rem; }
@@ -578,20 +584,31 @@ div[data-testid="stMetric"] {
   padding:14px 16px; box-shadow:0 1px 2px rgba(16,24,40,.04);
 }
 div[data-testid="stMetricLabel"] { color:var(--muted); }
+div[data-testid="stMetricValue"] { color:var(--ink); }
 div.stButton > button {
   border-radius:10px; min-height:42px; font-weight:650; border:1px solid #D0D5DD;
+  background:var(--surface); color:var(--ink);
 }
 div.stButton > button[kind="primary"] {
   background:var(--brand); border-color:var(--brand); color:#fff;
 }
 div[data-testid="stExpander"] {
-  border:1px solid var(--line); border-radius:12px; background:#fff;
+  border:1px solid var(--line); border-radius:12px; background:var(--surface);
 }
 div[data-testid="stFileUploader"] {
-  border:1px dashed #C9CFD6; border-radius:12px; background:#fff;
+  border:1px dashed #C9CFD6; border-radius:12px; background:var(--surface);
+}
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input {
+  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
+}
+div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
 }
 .step-card {
-  background:#fff; border:1px solid var(--line); border-radius:14px;
+  background:var(--surface); border:1px solid var(--line); border-radius:14px;
   padding:16px 18px; margin:0 0 12px 0;
 }
 .step-kicker { color:var(--brand); font-size:12px; font-weight:800; letter-spacing:.08em; }
@@ -601,7 +618,57 @@ div[data-testid="stFileUploader"] {
 .status-warn { color:var(--warn); font-weight:700; }
 .status-danger { color:var(--danger); font-weight:700; }
 .small-note { color:var(--muted); font-size:12px; }
-</style>
+
+/* 브라우저/OS 다크 모드 대응: 앱 자체가 브라우저의 색상 선호를 따라감 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand:#79B8AC;
+    --brand-2:#8BC8BB;
+    --ink:#F3F4F6;
+    --muted:#AEB7C2;
+    --line:#3A424B;
+    --surface:#20252B;
+    --surface-2:#171B20;
+    --warn:#F2C66D;
+    --danger:#FF8A80;
+    --ok:#6FD3AF;
+  }
+  .stApp { background:#171B20; color:var(--ink); }
+  [data-testid="stSidebar"] { background:#1D2228; border-right-color:#343B43; }
+  h1, h2, h3, h4, h5, h6,
+  p, label, span, div { color:inherit; }
+  div[data-testid="stMetric"] {
+    background:var(--surface); border-color:var(--line);
+    box-shadow:0 1px 2px rgba(0,0,0,.25);
+  }
+  div.stButton > button {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+  }
+  div.stButton > button[kind="primary"] {
+    background:#356B61; border-color:#356B61; color:#fff;
+  }
+  div[data-testid="stExpander"],
+  div[data-testid="stFileUploader"],
+  .step-card {
+    background:var(--surface); border-color:var(--line);
+  }
+  div[data-testid="stTextInput"] input,
+  div[data-testid="stTextArea"] textarea,
+  div[data-testid="stNumberInput"] input {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+    caret-color:#F3F4F6;
+  }
+  div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+  div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background:#252B31; color:#F3F4F6; border-color:#4A535D;
+  }
+  input::placeholder, textarea::placeholder { color:#8D98A5 !important; }
+  [data-testid="stMarkdownContainer"] a { color:#8BC8BB; }
+  .step-kicker { color:#8BC8BB; }
+  .status-ok { color:#6FD3AF; }
+  .status-warn { color:#F2C66D; }
+  .status-danger { color:#FF8A80; }
+}</style>
 """, unsafe_allow_html=True)
 
 def reset_review():
