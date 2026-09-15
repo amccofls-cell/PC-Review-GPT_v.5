@@ -81,13 +81,18 @@ class MfdsApiError(Exception):
 def prep_service_key(service_key):
     """
     data.go.kr 인증키 정규화.
-    데이터포털에서 발급받은 키는 이미 URL 인코딩 되어 있으므로(%2B 등),
-    requests 가 다시 인코딩할 때 이중 인코딩이 되지 않도록 1회 unquote 한다.
+    이미 URL 인코딩된 키(%2B 등) 또는 한 번 더 인코딩된 키(%252B 등)를 받아도
+    안정화될 때까지 unquote 한 뒤 requests 가 정확히 1회만 인코딩하게 둔다.
     """
     key = str(service_key or "").strip()
     if not key:
         return key
-    return urllib.parse.unquote(key)
+    for _ in range(5):
+        dec = urllib.parse.unquote(key)
+        if dec == key:
+            break
+        key = dec
+    return key
 
 
 def _get_body(data):

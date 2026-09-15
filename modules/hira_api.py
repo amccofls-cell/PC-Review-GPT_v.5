@@ -28,11 +28,16 @@ class HiraApiError(Exception):
 
 
 def prep_service_key(service_key):
-    """data.go.kr 인증키 이중 인코딩 방지 — URL 인코딩된 키를 1회 unquote."""
+    """data.go.kr 인증키 이중 인코딩 방지 — 안정화될 때까지 unquote 후 requests가 1회만 인코딩하게 둔다."""
     key = str(service_key or "").strip()
     if not key:
         return key
-    return urllib.parse.unquote(key)
+    for _ in range(5):
+        dec = urllib.parse.unquote(key)
+        if dec == key:
+            break
+        key = dec
+    return key
 
 
 def _get_body(data):
@@ -58,7 +63,7 @@ def _extract_items(body):
 
 def _get_json(params, timeout=30, retries=3):
     params = dict(params)
-    params["serviceKey"] = prep_service_key(params.get("serviceKey", ""))
+    params.setdefault("type", "json")
     last_exc = None
     resp = None
     for attempt in range(max(1, retries)):
@@ -87,13 +92,19 @@ def _get_json(params, timeout=30, retries=3):
         err = hdr.get("errMsg") or ""
         auth = hdr.get("returnAuthMsg") or ""
         if err or auth:
-            raise HiraApiError(f"HIRA API 오류: {auth or err} ({err})")
+            reason = hdr.get("returnReasonCode") or ""
+            raise HiraApiError(f"HIRA API 오류 (resultCode={reason}): {auth or err} ({err})")
     header = data.get("header") or {}
     code = header.get("resultCode")
     if str(code) not in ("00", "0", "200"):
-        msg = header.get("resultMsg") or f"resultCode={code}"
-        raise HiraApiError(f"HIRA API 오류: {msg}")
+        msg = header.get("resultMsg") or "알 수 없는 오류"
+        raise HiraApiError(f"HIRA API 오류 (resultCode={code}): {msg}")
     return data
+
+
+def _clean_name(name):
+    """Colab 검증 스크립트와 동일한 품목명 정리: 끝의 _(...) 괄호 접미 제거."""
+    return re.sub(r"_\(.*?\)\s*$", "", str(name or "")).strip()
 
 
 def _map_row(it):
@@ -106,8 +117,6 @@ def _map_row(it):
         "itmNm": str(it.get("itmNm") or "").strip(),
         "mnfEntpNm": str(it.get("mnfEntpNm") or "").strip(),
         "mxCprc": str(it.get("mxCprc") or "").strip(),
-        "adtStaDd": str(it.get("adtStaDd") or "").strip(),
-        "sellEptDd": str(it.get("sellEptDd") or "").strip(),
         "payTpNm": pay,
         "meftDivNo": str(it.get("meftDivNo") or "").strip(),
     }
@@ -173,7 +182,7 @@ def search_by_name(name, service_key):
     data = _get_json({
         "serviceKey": service_key,
         "type": "json",
-        "itmNm": str(name).strip(),
+        "itmNm": _clean_name(name),
         "numOfRows": 100,
         "pageNo": 1,
     })
@@ -209,45 +218,6 @@ def search_for_product(detail, service_key):
         uniq.append(r)
     return uniq
 
-
-def select_current_price_row(rows, as_of_date=None):
-    """
-    기준일에 적용 중인 약가 이력 1건을 선택한다.
-    adtStaDd <= 기준일이고 sellEptDd가 없거나 기준일 이후인 이력 중
-    적용시작일이 가장 최근인 행을 선택한다.
-    날짜 필드가 없는 구형 캐시는 기존 첫 행을 반환한다.
-    """
-    if not rows:
-        return None
-    import datetime as _dt
-    if as_of_date is None:
-        as_of_date = _dt.date.today()
-    elif isinstance(as_of_date, str):
-        try:
-            as_of_date = _dt.date.fromisoformat(as_of_date[:10])
-        except ValueError:
-            as_of_date = _dt.date.today()
-
-    def parse_yyyymmdd(value):
-        digits = re.sub(r"\D", "", str(value or ""))
-        if len(digits) != 8:
-            return None
-        try:
-            return _dt.date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
-        except ValueError:
-            return None
-
-    dated = []
-    for row in rows:
-        start = parse_yyyymmdd(row.get("adtStaDd"))
-        end = parse_yyyymmdd(row.get("sellEptDd"))
-        if start is None:
-            continue
-        if start <= as_of_date and (end is None or as_of_date <= end):
-            dated.append((start, row))
-    if dated:
-        return max(dated, key=lambda x: x[0])[1]
-    return rows[0]
 
 def get_price(row):
     """상한금액(mxCprc)을 float 로 변환. 없으면 None."""
