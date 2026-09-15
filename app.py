@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-의약품 심의자료 진위·오탈자 검증기 v4.3 — Streamlit 웹앱 엔트리포인트
+의약품 심의자료 진위·오탈자 검증기 v4.3.3 — Streamlit 웹앱 엔트리포인트
+
+v4.3.3 변경점 (UI/UX Quick wins 1~5):
+- 키 상태 뱃지 상시 표시(사이드바) / 조회 요약에 HIRA 사유 열 추가 / 오류 코드 뱃지 통일(401·403·0건)
+- ② 조회 전 예정 건수 캡션 / ⑤ 판정 요약 대시보드
 
 v4.3 변경점:
 1. 신청의약품/비교의약품을 단일 품목이 아닌 "그룹"으로 관리
@@ -35,7 +39,7 @@ from modules import hira_api, mfds_api, pptx_parser, result_parser, rule_validat
 from modules import table_normalizer as normalizer
 from modules import xlsx_parser
 
-st.set_page_config(page_title="의약품 심의자료 검증기 v4.3.2", page_icon="💊", layout="wide")
+st.set_page_config(page_title="의약품 심의자료 검증기 v4.3.3", page_icon="💊", layout="wide")
 
 _SS = st.session_state
 
@@ -154,6 +158,31 @@ def key_diagnostics(raw_value, source):
         "stable_has_percent": "%" in stable,
         "stable_has_percent25": "%25" in stable,
     }
+
+
+def key_status_line(name, source, active):
+    """키 출처를 한 줄 뱃지로: 🟢 입력창 / 🔵 Secrets / ⚪ 키 없음."""
+    color = {"sidebar_input": "🟢", "streamlit_secrets": "🔵", "none": "⚪"}.get(source, "⚪")
+    label = {"sidebar_input": "입력창", "streamlit_secrets": "Secrets", "none": "키 없음"}.get(source, "키 없음")
+    return f"{color} **{name}**: {label}" + ("" if active else " (미입력)")
+
+
+def api_error_badge(message):
+    """오류 메시지에서 resultCode/키워드를 읽어 401·403·0건·타임아웃 뱃지로 통일 표시."""
+    text = str(message or "")
+    m = re.search(r"resultCode[=:](\d+)", text)
+    code = m.group(1) if m else ""
+    if "등록되지 않은 서비스키" in text or "SERVICE_KEY_IS_NOT_REGISTERED" in text or code in ("30",):
+        return "🔴 403 (키 미등록·활용신청 확인)"
+    if "SERVICE_KEY_IS_NULL" in text or code in ("20",) or "키가 없" in text:
+        return "🟠 401 (키 미전달)"
+    if "0건" in text:
+        return "🟡 0건 (응답은 왔으나 데이터 없음)"
+    if "연결하지 못했습니다" in text or "timed out" in text or "timeout" in text.lower():
+        return "🔴 연결 실패/타임아웃"
+    if code:
+        return f"🟠 오류 (resultCode={code})"
+    return "🟠 오류"
 
 
 def init_group_state():
@@ -587,7 +616,7 @@ init_group_state()
 
 # ---------------- 사이드바 ----------------
 with st.sidebar:
-    st.markdown("## 💊 검증기 v4.3.2")
+    st.markdown("## 💊 검증기 v4.3.3")
     st.caption("MFDS 허가사항 · HIRA 약가정보 대조 검증")
 
     # 기존 Colab 검증 스크립트와 동일한 Secrets 키명(MFDS_KEY/HIRA_KEY)을 함께 읽는다.
@@ -604,6 +633,13 @@ with st.sidebar:
     st.caption("키는 세션에서만 사용하며 저장하지 않습니다. Secrets 키명: MFDS_API_KEY / HIRA_API_KEY / DATA_GO_KOR_API_KEY / MFDS_KEY / HIRA_KEY")
     mfds_key_effective, mfds_key_source = effective_key(mfds_key_in, "MFDS_API_KEY", "DATA_GO_KOR_API_KEY", "MFDS_KEY")
     hira_key_effective, hira_key_source = effective_key(hira_key_in, "HIRA_API_KEY", "DATA_GO_KOR_API_KEY", "HIRA_KEY")
+
+    st.markdown(
+        "　".join([
+            key_status_line("MFDS", mfds_key_source, bool(mfds_key_effective)),
+            key_status_line("HIRA", hira_key_source, bool(hira_key_effective)),
+        ])
+    )
 
     with st.expander("🔎 API 키 진단 (값 비공개)"):
         st.caption("키 문자열 자체는 표시하지 않고, 인코딩 여부를 판단하는 파생 정보만 보여줍니다.")
@@ -629,7 +665,7 @@ with st.sidebar:
                 _SS["mfds_items"], _SS["mfds_meta"] = items, meta
                 st.success(f"MFDS {len(items):,}건 적재 완료 — {meta['loaded_at']}")
             except mfds_api.MfdsApiError as e:
-                st.error(f"MFDS 적재 실패: {e}")
+                st.error(f"{api_error_badge(str(e))} — MFDS 적재 실패: {e}")
             if hira_key:
                 bar2 = st.progress(0.0)
                 status_txt2 = st.empty()
@@ -643,9 +679,9 @@ with st.sidebar:
                     if items2:
                         st.success(f"HIRA {len(items2):,}건 적재 완료 — {meta2['loaded_at']}")
                     else:
-                        st.warning("HIRA 응답은 왔지만 적재 건수가 0건입니다. 활용신청 상태 또는 응답 구조를 확인해 주세요.")
+                        st.warning("🟡 0건 (HTTP 200·데이터 없음) — HIRA 응답은 왔지만 적재 건수가 0건입니다. 활용신청 상태 또는 응답 구조를 확인해 주세요.")
                 except hira_api.HiraApiError as e:
-                    st.error(f"HIRA 적재 실패: {e}")
+                    st.error(f"{api_error_badge(str(e))} — HIRA 적재 실패: {e}")
             else:
                 st.caption("HIRA 키 미입력 — 약가 목록은 불러오지 않습니다.")
     st.divider()
@@ -675,7 +711,7 @@ with st.sidebar:
     st.caption("사용 흐름: ① 데이터 불러오기(1회) → ② 검색·선택/그룹지정/항목선택 → ③ 자동조회 → ④ 비교표 입력 → ⑤ 구조 확인 → ⑥ 1차 검증 → ⑦ Claude 자료 생성")
 
 # ---------------- 본문 ----------------
-st.title("의약품 심의자료 진위·오탈자 검증기 v4.3.2")
+st.title("의약품 심의자료 진위·오탈자 검증기 v4.3.3")
 st.caption(
     "의약품 검색은 불러온 캐시(JSON) 기준 로컬 필터링으로 동작합니다. "
     "신청의약품과 비교의약품은 각각 여러 함량 품목을 가진 그룹으로 관리할 수 있습니다."
@@ -817,6 +853,15 @@ for index, key in enumerate(EXTRA_FIELD_ORDER):
 # ============ ② 자동 조회 ============
 st.markdown("## ② 허가사항·약가 자동 조회")
 fetch_disabled = not grouping.flatten_group_seqs(_SS["groups"]) or not mfds_key_effective
+_pending_items = group_items(by_seq) if _SS.get("mfds_items") is not None else []
+if _pending_items:
+    _n_app = sum(1 for x in _pending_items if x.get("group_id") == "applicant")
+    st.caption(
+        f"조회 예정: 총 **{len(_pending_items)}건** (신청의약품 {_n_app}건 · 비교약 {len(_pending_items) - _n_app}건) "
+        f"— MFDS 상세 {len(_pending_items)}회 + HIRA 매칭(캐시 우선, 미적재 시 API 폴백)"
+    )
+else:
+    st.caption("조회 예정: 그룹에 품목을 추가하면 이곳에 건수가 표시됩니다.")
 if st.button("선택한 그룹 품목 조회", type="primary", disabled=fetch_disabled, key="fetch_btn"):
     grouped_items = group_items(by_seq)
     if not grouped_items:
@@ -889,12 +934,21 @@ if _SS.get("products"):
     for p in _SS["products"]:
         d = p["detail"]
         m = p["match"]
+        if p["hira_rows"]:
+            hira_reason = "✅ 매칭 성공" + (f" ({m.get('method')})" if m.get("method") else "")
+        elif d.get("error"):
+            hira_reason = "— MFDS 조회 실패로 미조회"
+        elif not _SS.get("hira_items") and not hira_key_effective:
+            hira_reason = "⚠ 캐시 미적재·키 없음 (사이드바에서 불러오기)"
+        else:
+            hira_reason = str(m.get("status", "⚠ 매칭 실패"))
         rows.append({
             "구분": p.get("group_label", p["role"]),
             "함량": p.get("strength", ""),
             "제품": p.get("item_name") or p["label"].split(" | ")[0],
             "MFDS": "✅ 조회됨" if not d.get("error") else "❌ 실패",
-            "HIRA": f"✅ {len(p['hira_rows'])}건" if p["hira_rows"] else ("⚠ 없음/실패" if not d.get("error") else "—"),
+            "HIRA": f"✅ {len(p['hira_rows'])}건" if p["hira_rows"] else ("⚠ 없음" if not d.get("error") else "—"),
+            "HIRA 사유": hira_reason,
             "제품 매칭": m.get("status", drug_matcher.STATUS_FAIL),
             "약가(원)": f"{p['price']:,.0f}" if p["price"] is not None else "—",
         })
@@ -1022,6 +1076,21 @@ if _SS.get("products") and _SS.get("pairs"):
     if _SS.get("validation_df") is not None:
         vdf = _SS["validation_df"]
         st.dataframe(style_df(vdf, "1차 판정"), use_container_width=True)
+        if not vdf.empty and "1차 판정" in vdf.columns:
+            _cnt = vdf["1차 판정"].value_counts()
+            _parts = []
+            for _val, _n in _cnt.items():
+                _key = str(_val)
+                if any(t in _key for t in ("Claude", "확인 필요", "🟠")):
+                    _emoji = "🟠"
+                elif any(t in _key for t in ("일치", "✅")):
+                    _emoji = "🟢"
+                elif any(t in _key for t in ("불일치", "❌", "수정필요", "오류")):
+                    _emoji = "🔴"
+                else:
+                    _emoji = "🟡"
+                _parts.append(f"{_emoji} {_key} {int(_n)}건")
+            st.markdown("**판정 요약**　" + "　·　".join(_parts))
         st.caption("🟠 Claude 확인 필요 항목은 Python이 판정하지 않습니다. ⑥ 단계 자료를 Claude 웹에 붙여넣어 의미 검증하세요.")
 else:
     st.caption("② 단계에서 제품을 조회하고 ③~④ 단계에서 비교표를 인식해야 검증할 수 있습니다.")
