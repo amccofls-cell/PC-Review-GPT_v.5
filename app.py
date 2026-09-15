@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-의약품 심의자료 검증기 v5.0 — Streamlit 웹앱 엔트리포인트
+의약품 심의자료 진위·오탈자 검증기 v4.3 — Streamlit 웹앱 엔트리포인트
 
 v4.3 변경점:
 1. 신청의약품/비교의약품을 단일 품목이 아닌 "그룹"으로 관리
@@ -24,6 +24,7 @@ v4.3 변경점:
 import html as html_lib
 import json
 import re
+import urllib.parse
 
 import pandas as pd
 import streamlit as st
@@ -34,12 +35,7 @@ from modules import hira_api, mfds_api, pptx_parser, result_parser, rule_validat
 from modules import table_normalizer as normalizer
 from modules import xlsx_parser
 
-st.set_page_config(
-    page_title="의약품 심의자료 검증기",
-    page_icon="💊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="의약품 심의자료 검증기 v4.3.2", page_icon="💊", layout="wide")
 
 _SS = st.session_state
 
@@ -55,9 +51,6 @@ for _k, _v in {
     "fetched_df": None,
     "groups": None,
     "strength_overrides": {},
-    "review_date": __import__("datetime").date.today(),
-    "claude_result_df": None,
-    "claude_result_raw": "",
 }.items():
     _SS.setdefault(_k, _v)
 
@@ -120,6 +113,47 @@ def secrets_value(*keys, default=""):
     except Exception:
         pass
     return default
+
+
+def effective_key(typed_value, *secret_keys):
+    typed = str(typed_value or "").strip()
+    if typed:
+        return typed, "sidebar_input"
+    secret = str(secrets_value(*secret_keys) or "").strip()
+    if secret:
+        return secret, "streamlit_secrets"
+    return "", "none"
+
+
+def decode_until_stable(value, max_rounds=5):
+    current = str(value or "")
+    rounds = 0
+    while rounds < max_rounds:
+        decoded = urllib.parse.unquote(current)
+        if decoded == current:
+            break
+        current = decoded
+        rounds += 1
+    return current, rounds
+
+
+def key_diagnostics(raw_value, source):
+    raw = str(raw_value or "").strip()
+    once = urllib.parse.unquote(raw) if raw else ""
+    stable, rounds = decode_until_stable(raw)
+    return {
+        "source": source,
+        "length": len(raw),
+        "has_percent": "%" in raw,
+        "has_percent25": "%25" in raw,
+        "decode_once_length": len(once),
+        "decode_once_has_percent": "%" in once,
+        "decode_once_has_percent25": "%25" in once,
+        "stable_decode_rounds": rounds,
+        "stable_length": len(stable),
+        "stable_has_percent": "%" in stable,
+        "stable_has_percent25": "%25" in stable,
+    }
 
 
 def init_group_state():
@@ -317,20 +351,14 @@ def render_resizable_wrapped_table(display_df, show_index=False, height=720, tab
     table_width_css = "width:100%;" if show_index else "width:max-content; min-width:100%;"
     markup = f"""
     <style>
-      html, body {{ margin:0; padding:0; background:#fff; color:#1f2937; font-family:Arial, sans-serif; }}
+      html, body {{ margin:0; padding:0; background:#fff; font-family:Arial, sans-serif; }}
       .table-wrap {{ width:100%; height:calc(100vh - 24px); overflow:auto; border:1px solid #d9dee7; }}
       table {{ border-collapse:collapse; table-layout:fixed; {table_width_css} font-size:13px; }}
-      th, td {{ border:1px solid #d9dee7; color:#1f2937; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
-      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; color:#111827; font-weight:700; text-align:left; user-select:none; }}
+      th, td {{ border:1px solid #d9dee7; padding:8px; vertical-align:top; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }}
+      th {{ position:sticky; top:0; z-index:2; background:#f3f6fa; font-weight:700; text-align:left; user-select:none; }}
       .resize-handle {{ position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:3; }}
       .resize-handle:hover, .resizing {{ background:#5b8def; opacity:.55; }}
       body.resizing {{ cursor:col-resize; user-select:none; }}
-      @media (prefers-color-scheme: dark) {{
-        html, body {{ background:#171b1f; color:#f3f4f6; }}
-        .table-wrap {{ border-color:#3b424a; }}
-        th, td {{ border-color:#3b424a; color:#e5e7eb; }}
-        th {{ background:#252b31; color:#f9fafb; }}
-      }}
     </style>
     <div class="table-wrap" id="wrap-{table_key}">
       <table id="table-{table_key}"><colgroup>{colgroup}</colgroup><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_html)}</tbody></table>
@@ -557,283 +585,114 @@ def style_price_summary(df):
 
 init_group_state()
 
-
-# ---------------- v5.0 UI / UX ----------------
-st.markdown("""
-<style>
- :root {
-  --brand:#315C55;
-  --brand-2:#477A70;
-  --ink:#1F2937;
-  --muted:#667085;
-  --line:#E6E8EC;
-  --surface:#FFFFFF;
-  --surface-2:#F7F8FA;
-  --warn:#9A6700;
-  --danger:#B42318;
-  --ok:#13795B;
-}
-.stApp { background:#F6F7F9; color:var(--ink); }
-.block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
-[data-testid="stSidebar"] { background:#F1F3F2; border-right:1px solid #E1E5E3; }
-[data-testid="stSidebar"] .block-container { padding-top:1.25rem; }
-h1 { letter-spacing:-.03em; color:var(--ink); font-weight:800; }
-h2, h3 { letter-spacing:-.02em; color:var(--ink); }
-div[data-testid="stMetric"] {
-  background:var(--surface); border:1px solid var(--line); border-radius:14px;
-  padding:14px 16px; box-shadow:0 1px 2px rgba(16,24,40,.04);
-}
-div[data-testid="stMetricLabel"] { color:var(--muted); }
-div[data-testid="stMetricValue"] { color:var(--ink); }
-div.stButton > button {
-  border-radius:10px; min-height:42px; font-weight:650; border:1px solid #D0D5DD;
-  background:var(--surface); color:var(--ink);
-}
-div.stButton > button[kind="primary"] {
-  background:var(--brand); border-color:var(--brand); color:#fff;
-}
-div[data-testid="stExpander"] {
-  border:1px solid var(--line); border-radius:12px; background:var(--surface);
-}
-div[data-testid="stFileUploader"] {
-  border:1px dashed #C9CFD6; border-radius:12px; background:var(--surface);
-}
-div[data-testid="stTextInput"] input,
-div[data-testid="stTextArea"] textarea,
-div[data-testid="stNumberInput"] input {
-  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
-}
-div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
-div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
-  background:var(--surface); color:var(--ink); border-color:#D0D5DD;
-}
-.step-card {
-  background:var(--surface); border:1px solid var(--line); border-radius:14px;
-  padding:16px 18px; margin:0 0 12px 0;
-}
-.step-kicker { color:var(--brand); font-size:12px; font-weight:800; letter-spacing:.08em; }
-.step-title { color:var(--ink); font-size:19px; font-weight:800; margin-top:3px; }
-.step-help { color:var(--muted); font-size:13px; margin-top:4px; }
-.status-ok { color:var(--ok); font-weight:700; }
-.status-warn { color:var(--warn); font-weight:700; }
-.status-danger { color:var(--danger); font-weight:700; }
-.small-note { color:var(--muted); font-size:12px; }
-
-/* 브라우저/OS 다크 모드 대응: 앱 자체가 브라우저의 색상 선호를 따라감 */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --brand:#79B8AC;
-    --brand-2:#8BC8BB;
-    --ink:#F3F4F6;
-    --muted:#AEB7C2;
-    --line:#3A424B;
-    --surface:#20252B;
-    --surface-2:#171B20;
-    --warn:#F2C66D;
-    --danger:#FF8A80;
-    --ok:#6FD3AF;
-  }
-  .stApp { background:#171B20; color:var(--ink); }
-  [data-testid="stSidebar"] { background:#1D2228; border-right-color:#343B43; }
-  h1, h2, h3, h4, h5, h6,
-  p, label, span, div { color:inherit; }
-  div[data-testid="stMetric"] {
-    background:var(--surface); border-color:var(--line);
-    box-shadow:0 1px 2px rgba(0,0,0,.25);
-  }
-  div.stButton > button {
-    background:#252B31; color:#F3F4F6; border-color:#4A535D;
-  }
-  div.stButton > button[kind="primary"] {
-    background:#356B61; border-color:#356B61; color:#fff;
-  }
-  div[data-testid="stExpander"],
-  div[data-testid="stFileUploader"],
-  .step-card {
-    background:var(--surface); border-color:var(--line);
-  }
-  div[data-testid="stTextInput"] input,
-  div[data-testid="stTextArea"] textarea,
-  div[data-testid="stNumberInput"] input {
-    background:#252B31; color:#F3F4F6; border-color:#4A535D;
-    caret-color:#F3F4F6;
-  }
-  div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
-  div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
-    background:#252B31; color:#F3F4F6; border-color:#4A535D;
-  }
-  input::placeholder, textarea::placeholder { color:#8D98A5 !important; }
-  [data-testid="stMarkdownContainer"] a { color:#8BC8BB; }
-  .step-kicker { color:#8BC8BB; }
-  .status-ok { color:#6FD3AF; }
-  .status-warn { color:#F2C66D; }
-  .status-danger { color:#FF8A80; }
-}</style>
-""", unsafe_allow_html=True)
-
-def reset_review():
-    """현재 검토 세션만 초기화하고 캐시는 유지한다."""
-    keep = {
-        "mfds_items": _SS.get("mfds_items"),
-        "mfds_meta": _SS.get("mfds_meta"),
-        "hira_items": _SS.get("hira_items"),
-        "hira_meta": _SS.get("hira_meta"),
-    }
-    for k in list(_SS.keys()):
-        if k not in keep:
-            del _SS[k]
-    _SS.update({
-        "search_rows": [], "products": [], "table": None, "pairs": [],
-        "validation_df": None, "orientation": normalizer.ORIENT_ROWS_ARE_ITEMS,
-        "selection": [], "fetched_df": None, "groups": None,
-        "strength_overrides": {}, "claude_result_df": None,
-        "claude_result_raw": "", "review_date": __import__("datetime").date.today(),
-    })
-    init_group_state()
-
-def make_excel_bytes(df):
-    from io import BytesIO
-    out = BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="검토결과")
-    return out.getvalue()
-
-def step_header(no, title, help_text):
-    st.markdown(
-        f'<div class="step-card"><div class="step-kicker">STEP {no}</div>'
-        f'<div class="step-title">{title}</div><div class="step-help">{help_text}</div></div>',
-        unsafe_allow_html=True,
-    )
-
 # ---------------- 사이드바 ----------------
-mfds_key_effective = secrets_value("MFDS_API_KEY", "DATA_GO_KOR_API_KEY")
-hira_key_effective = secrets_value("HIRA_API_KEY", "DATA_GO_KOR_API_KEY")
-
 with st.sidebar:
-    st.markdown("## 💊 심의자료 검증기")
-    st.caption("MFDS 허가사항 · HIRA 약가 · 비교표 교차검증")
-    if mfds_key_effective:
-        st.success("MFDS API 연결 준비됨")
-    else:
-        st.warning("MFDS API 키 미설정")
-    if hira_key_effective:
-        st.success("HIRA API 연결 준비됨")
-    else:
-        st.info("HIRA API 키 미설정")
+    st.markdown("## 💊 검증기 v4.3.2")
+    st.caption("MFDS 허가사항 · HIRA 약가정보 대조 검증")
 
-    st.divider()
-    st.markdown("### 검토 세션")
-    review_date = st.date_input(
-        "약가 검토 기준일",
-        value=_SS.get("review_date"),
-        key="review_date",
-        help="HIRA 약가는 이 날짜에 적용되는 이력을 기준으로 확인합니다.",
+    # 기존 Colab 검증 스크립트와 동일한 Secrets 키명(MFDS_KEY/HIRA_KEY)을 함께 읽는다.
+    mfds_key_in = st.text_input(
+        "MFDS 인증키",
+        type="password",
+        value=secrets_value("MFDS_API_KEY", "DATA_GO_KOR_API_KEY", "MFDS_KEY"),
     )
-    st.caption("기준일을 변경했다면 ②단계에서 다시 조회하세요.")
-    if st.button("🧹 새 검토 시작", use_container_width=True):
-        reset_review()
-        st.rerun()
+    hira_key_in = st.text_input(
+        "HIRA 인증키",
+        type="password",
+        value=secrets_value("HIRA_API_KEY", "DATA_GO_KOR_API_KEY", "HIRA_KEY"),
+    )
+    st.caption("키는 세션에서만 사용하며 저장하지 않습니다. Secrets 키명: MFDS_API_KEY / HIRA_API_KEY / DATA_GO_KOR_API_KEY / MFDS_KEY / HIRA_KEY")
+    mfds_key_effective, mfds_key_source = effective_key(mfds_key_in, "MFDS_API_KEY", "DATA_GO_KOR_API_KEY", "MFDS_KEY")
+    hira_key_effective, hira_key_source = effective_key(hira_key_in, "HIRA_API_KEY", "DATA_GO_KOR_API_KEY", "HIRA_KEY")
 
-    st.divider()
-    st.markdown("### 데이터 캐시")
-    if _SS.get("mfds_items"):
-        st.success(f"MFDS {len(_SS['mfds_items']):,}건")
-        st.caption(f"적재: {(_SS.get('mfds_meta') or {}).get('loaded_at', '?')}")
-    else:
-        st.warning("MFDS 캐시 없음")
-    if _SS.get("hira_items"):
-        st.success(f"HIRA {len(_SS['hira_items']):,}건")
-        st.caption(f"적재: {(_SS.get('hira_meta') or {}).get('loaded_at', '?')}")
-    else:
-        st.info("HIRA 캐시 없음")
+    with st.expander("🔎 API 키 진단 (값 비공개)"):
+        st.caption("키 문자열 자체는 표시하지 않고, 인코딩 여부를 판단하는 파생 정보만 보여줍니다.")
+        st.json({
+            "MFDS": key_diagnostics(mfds_key_effective, mfds_key_source),
+            "HIRA": key_diagnostics(hira_key_effective, hira_key_source),
+        })
 
-    with st.expander("데이터 새로 적재", expanded=False):
-        st.caption("Secrets의 API 키를 사용합니다. 키를 화면에 입력하지 않습니다.")
-        if st.button("📥 MFDS/HIRA 전체 목록 갱신", use_container_width=True):
-            if not mfds_key_effective:
-                st.error("MFDS_API_KEY가 Streamlit Secrets에 없습니다.")
-            else:
-                bar = st.progress(0.0)
-                status_txt = st.empty()
+    if st.button("📥 전체 데이터 불러오기 (1회)", type="primary"):
+        mfds_key = mfds_key_effective
+        hira_key = hira_key_effective
+        if not mfds_key:
+            st.error("MFDS 인증키를 입력해 주세요.")
+        else:
+            bar = st.progress(0.0)
+            status_txt = st.empty()
+            try:
+                items = mfds_api.fetch_all_products(
+                    mfds_key,
+                    progress_cb=lambda f, n: (bar.progress(f), status_txt.caption(f"MFDS 품목목록: {n:,}건 수집중...")),
+                )
+                meta = cache_store.save_cache(cache_store.MFDS_CACHE_FILE, items, {"service": "MFDS 품목허가"})
+                _SS["mfds_items"], _SS["mfds_meta"] = items, meta
+                st.success(f"MFDS {len(items):,}건 적재 완료 — {meta['loaded_at']}")
+            except mfds_api.MfdsApiError as e:
+                st.error(f"MFDS 적재 실패: {e}")
+            if hira_key:
+                bar2 = st.progress(0.0)
+                status_txt2 = st.empty()
                 try:
-                    items = mfds_api.fetch_all_products(
-                        mfds_key_effective,
-                        progress_cb=lambda f, n: (bar.progress(f), status_txt.caption(f"MFDS {n:,}건 수집 중…")),
+                    items2 = hira_api.fetch_all_drug_prices(
+                        hira_key,
+                        progress_cb=lambda f, n: (bar2.progress(f), status_txt2.caption(f"HIRA 약가: {n:,}건 수집중...")),
                     )
-                    meta = cache_store.save_cache(
-                        cache_store.MFDS_CACHE_FILE, items, {"service": "MFDS 품목허가"}
-                    )
-                    _SS["mfds_items"], _SS["mfds_meta"] = items, meta
-                    st.success(f"MFDS {len(items):,}건 갱신 완료")
-                except mfds_api.MfdsApiError as e:
-                    st.error(f"MFDS 적재 실패: {e}")
-                if hira_key_effective:
-                    bar2 = st.progress(0.0)
-                    status_txt2 = st.empty()
-                    try:
-                        items2 = hira_api.fetch_all_drug_prices(
-                            hira_key_effective,
-                            progress_cb=lambda f, n: (bar2.progress(f), status_txt2.caption(f"HIRA {n:,}건 수집 중…")),
-                        )
-                        meta2 = cache_store.save_cache(
-                            cache_store.HIRA_CACHE_FILE, items2, {"service": "HIRA 약가"}
-                        )
-                        _SS["hira_items"], _SS["hira_meta"] = items2, meta2
-                        st.success(f"HIRA {len(items2):,}건 갱신 완료")
-                    except hira_api.HiraApiError as e:
-                        st.error(f"HIRA 적재 실패: {e}")
-                else:
-                    st.info("HIRA_API_KEY가 없어 HIRA는 건너뜁니다.")
-
-    if st.button("🔄 기존 캐시 다시 읽기", use_container_width=True):
+                    meta2 = cache_store.save_cache(cache_store.HIRA_CACHE_FILE, items2, {"service": "HIRA 약가"})
+                    _SS["hira_items"], _SS["hira_meta"] = items2, meta2
+                    if items2:
+                        st.success(f"HIRA {len(items2):,}건 적재 완료 — {meta2['loaded_at']}")
+                    else:
+                        st.warning("HIRA 응답은 왔지만 적재 건수가 0건입니다. 활용신청 상태 또는 응답 구조를 확인해 주세요.")
+                except hira_api.HiraApiError as e:
+                    st.error(f"HIRA 적재 실패: {e}")
+            else:
+                st.caption("HIRA 키 미입력 — 약가 목록은 불러오지 않습니다.")
+    st.divider()
+    st.markdown("**캐시 상태 (data/cache/*.json)**")
+    if _SS.get("mfds_items"):
+        st.info(f"✅ MFDS {len(_SS['mfds_items']):,}건\n적재시각: {(_SS.get('mfds_meta') or {}).get('loaded_at', '?')}")
+    else:
+        st.warning("❌ MFDS 데이터 없음 — 「전체 데이터 불러오기」 실행")
+    if _SS.get("hira_items") is not None:
+        st.info(f"✅ HIRA {len(_SS['hira_items']):,}건\n적재시각: {(_SS.get('hira_meta') or {}).get('loaded_at', '?')}")
+    else:
+        st.warning("❌ HIRA 데이터 없음 — 키 입력 후 불러오기 실행")
+    if st.button("🔄 세션에 캐시 다시 로드"):
         _p = cache_store.load_cache(cache_store.MFDS_CACHE_FILE)
         if _p:
             _SS["mfds_items"], _SS["mfds_meta"] = _p["items"], _p
+            st.success(f"MFDS 캐시 {len(_p['items']):,}건 로드")
+        else:
+            st.warning("MFDS 캐시 파일이 없습니다.")
         _p2 = cache_store.load_cache(cache_store.HIRA_CACHE_FILE)
         if _p2:
             _SS["hira_items"], _SS["hira_meta"] = _p2["items"], _p2
-        st.rerun()
-
+            st.success(f"HIRA 캐시 {len(_p2['items']):,}건 로드")
+        else:
+            st.warning("HIRA 캐시 파일이 없습니다.")
     st.divider()
-    st.markdown("### 사용 흐름")
-    st.caption("① 품목 선택 → ② 공식정보 조회 → ③ 비교표 입력 → ④ 구조 확인 → ⑤ 기계검증 → ⑥ Claude 검증")
-    st.markdown('<div class="small-note">🔐 API 인증키는 Streamlit Secrets에서만 읽습니다.</div>', unsafe_allow_html=True)
+    st.caption("사용 흐름: ① 데이터 불러오기(1회) → ② 검색·선택/그룹지정/항목선택 → ③ 자동조회 → ④ 비교표 입력 → ⑤ 구조 확인 → ⑥ 1차 검증 → ⑦ Claude 자료 생성")
+
 # ---------------- 본문 ----------------
-st.title("의약품 심의자료 검증기")
-st.caption("신규의약품 심의자료의 비교표를 MFDS 허가사항·HIRA 약가정보와 교차검증하고, 의미 비교가 필요한 항목은 Claude 웹 검증용 자료로 변환합니다.")
+st.title("의약품 심의자료 진위·오탈자 검증기 v4.3.2")
+st.caption(
+    "의약품 검색은 불러온 캐시(JSON) 기준 로컬 필터링으로 동작합니다. "
+    "신청의약품과 비교의약품은 각각 여러 함량 품목을 가진 그룹으로 관리할 수 있습니다."
+)
 
-total_selected = len(grouping.flatten_group_seqs(_SS.get("groups")))
-product_count = len(_SS.get("products") or [])
-issue_count = 0
-claude_count = 0
-if _SS.get("validation_df") is not None and not _SS["validation_df"].empty:
-    vals = _SS["validation_df"]["1차 판정"].astype(str)
-    issue_count = int(vals.str.contains("수정필요").sum())
-    claude_count = int(vals.str.contains("Claude").sum())
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("선택 품목", f"{total_selected}건")
-m2.metric("조회 완료", f"{product_count}건")
-m3.metric("1차 수정필요", f"{issue_count}건")
-m4.metric("Claude 확인", f"{claude_count}건")
-
-st.divider()
-step_header("01", "의약품 선택 및 조회 설정", "검색 결과에서 신청의약품·비교의약품을 그룹으로 지정하고 필요한 허가정보 항목을 선택합니다.")
-
+# ============ ① 검색·선택/그룹지정/항목선택 ============
+st.markdown("## ① 의약품 검색·선택 및 조회 설정")
 if not _SS.get("mfds_items"):
-    st.warning("사이드바의 「데이터 새로 적재」에서 MFDS 목록을 한 번 갱신해 주세요. 이후 검색은 캐시 기준으로 빠르게 동작합니다.")
+    st.warning("먼저 사이드바에서 「📥 전체 데이터 불러오기 (1회)」를 실행해 주세요. 이후 검색은 캐시 기준으로만 동작합니다.")
 
 st.subheader("1. 의약품 검색")
-search_col1, search_col2 = st.columns([5, 1])
-with search_col1:
-    query = st.text_input("의약품명 또는 제약사명", placeholder="예: 나르코설하정, 앱스트랄, 인스타닐", key="query_text")
-with search_col2:
-    result_limit = st.selectbox("표시 수", [50, 100, 200], index=1, key="result_limit")
+query = st.text_input("의약품명 또는 제약사명", placeholder="예: 나르코설하정, 앱스트랄, 인스타닐", key="query_text")
 matches = []
 if query.strip() and _SS.get("mfds_items"):
-    matches = cache_store.filter_products(_SS["mfds_items"], query)[:result_limit]
+    matches = cache_store.filter_products(_SS["mfds_items"], query)[:200]
     _SS["search_rows"] = matches
-    st.caption(f"검색결과 {len(matches)}건 표시 (최대 {result_limit}건)")
+    st.caption(f"검색결과 {len(matches)}건 표시 (최대 200건)")
 else:
     _SS["search_rows"] = []
 
@@ -956,7 +815,7 @@ for index, key in enumerate(EXTRA_FIELD_ORDER):
         st.checkbox(EXTRA_FIELD_LABELS[key], key=f"extra_{key}")
 
 # ============ ② 자동 조회 ============
-step_header("02", "허가사항·약가 자동 조회", "선택 품목의 MFDS 상세 허가정보와 HIRA 약가를 공식 데이터 기준으로 조회합니다.")
+st.markdown("## ② 허가사항·약가 자동 조회")
 fetch_disabled = not grouping.flatten_group_seqs(_SS["groups"]) or not mfds_key_effective
 if st.button("선택한 그룹 품목 조회", type="primary", disabled=fetch_disabled, key="fetch_btn"):
     grouped_items = group_items(by_seq)
@@ -965,7 +824,7 @@ if st.button("선택한 그룹 품목 조회", type="primary", disabled=fetch_di
     elif not _SS["groups"].get("applicant", {}).get("seqs"):
         st.error("신청의약품 그룹에 최소 1개 품목이 필요합니다.")
     elif not mfds_key_effective:
-        st.error("MFDS_API_KEY가 Streamlit Secrets에 없습니다.")
+        st.error("MFDS 인증키가 없습니다. 사이드바에 입력해 주세요.")
     else:
         selected_extras = selected_extra_keys()
         bar = st.progress(0.0)
@@ -1000,13 +859,7 @@ if st.button("선택한 그룹 품목 조회", type="primary", disabled=fetch_di
                 else:
                     match = {"status": "⚠ HIRA 캐시·키 없음 — 사이드바에서 데이터 불러오기 실행", "row": None, "method": None}
 
-            current_hira_row = (
-                hira_api.select_current_price_row(hira_rows, review_date)
-                if hira_rows else None
-            )
-            price = hira_api.get_price(current_hira_row) if current_hira_row else None
-            if current_hira_row:
-                match["row"] = current_hira_row
+            price = hira_api.get_price(match["row"]) if match.get("row") else None
             products.append({
                 "label": lb,
                 "role": item["group_label"],
@@ -1067,25 +920,6 @@ if _SS.get("products"):
                 st.caption("행은 조회 항목, 열은 그룹-함량별 의약품입니다. 헤더 경계를 드래그해 약품별 컬럼 너비를 조절할 수 있습니다.")
                 render_resizable_wrapped_table(comparison_df, show_index=True, height=760, table_key="comparison")
 
-    st.markdown("#### 결과 내보내기")
-    dl1, dl2 = st.columns(2)
-    with dl1:
-        st.download_button(
-            "⬇️ 조회 결과 Excel",
-            data=make_excel_bytes(result_df),
-            file_name=f"의약품_허가사항_조회_{review_date.isoformat()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    with dl2:
-        st.download_button(
-            "⬇️ 조회 결과 CSV",
-            data=result_df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"의약품_허가사항_조회_{review_date.isoformat()}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
     price_summary = build_group_price_summary(_SS["products"])
     if price_summary is not None and not price_summary.empty:
         st.markdown("#### 💰 함량별 약가 비교 (신청의약품 vs 동일 함량 비교약 최저가)")
@@ -1101,14 +935,13 @@ if _SS.get("products"):
                 for r in p["hira_rows"]:
                     st.text(
                         f"품목명: {r.get('itmNm')} / 제조사: {r.get('mnfEntpNm')} / 코드: {r.get('mdsCd')} / "
-                        f"상한금액: {r.get('mxCprc')}원 / 적용시작: {r.get('adtStaDd') or '—'} / "
-                        f"판매종료: {r.get('sellEptDd') or '—'} / 급여구분: {r.get('payTpNm')} / 약효분류: {r.get('meftDivNo')}"
+                        f"상한금액: {r.get('mxCprc')}원 / 급여구분: {r.get('payTpNm')} / 약효분류: {r.get('meftDivNo')}"
                     )
             else:
                 st.caption("(HIRA 매칭 결과 없음 — 캐시 재적재 또는 키 확인 필요)")
 
 # ============ ③ 비교표 입력 ============
-step_header("03", "심의자료 비교표 입력", "PPTX·XLSX 파일을 업로드하거나 PowerPoint/Excel 표를 그대로 복사·붙여넣기합니다.")
+st.markdown("## ③ 심의자료 비교표 입력")
 tab1, tab2, tab3 = st.tabs(["📊 PPTX 업로드", "📈 XLSX 업로드", "📋 복사·붙여넣기"])
 
 with tab1:
@@ -1142,7 +975,7 @@ with tab3:
             st.error(str(e))
 
 # ============ ④ 구조 확인 ============
-step_header("04", "비교표 구조 확인", "행/열 방향을 자동 추정하고 공통 스키마로 변환합니다. 병합 셀은 원본 구조를 최대한 보존합니다.")
+st.markdown("## ④ 비교표 구조 확인")
 if _SS["table"] is not None:
     tbl = _SS["table"]
     st.caption(f"출처: {tbl['source']} / 슬라이드·시트: {tbl['slide']} / 표 순번: {tbl['table_index']}")
@@ -1168,7 +1001,7 @@ if _SS["table"] is not None:
         st.dataframe(pd.DataFrame(pairs), use_container_width=True)
 
 # ============ ⑤ 1차 자동 검증 ============
-step_header("05", "Python 1차 자동 검증", "기본정보·숫자/단위·약가처럼 기계적으로 확실한 항목만 자동 판정합니다.")
+st.markdown("## ⑤ Python 1차 자동 검증")
 if _SS.get("products") and _SS.get("pairs"):
     if st.button("🔍 1차 규칙 검증 실행 (기본정보·숫자단위·약가만)", key="validate_btn"):
         products = _SS["products"]
@@ -1194,7 +1027,7 @@ else:
     st.caption("② 단계에서 제품을 조회하고 ③~④ 단계에서 비교표를 인식해야 검증할 수 있습니다.")
 
 # ============ ⑥ Claude 검증 자료 생성 ============
-step_header("06", "Claude 검증 자료 생성", "Claude API를 호출하지 않고, 웹에서 바로 붙여넣을 수 있는 검증 프롬프트를 생성합니다.")
+st.markdown("## ⑥ Claude 검증 자료 생성 (웹에서 의미 검증)")
 if _SS.get("products") and _SS.get("pairs"):
     products = _SS["products"]
     prompt_products = []
@@ -1210,17 +1043,7 @@ if _SS.get("products") and _SS.get("pairs"):
     full_prompt = claude_prompt_builder.build_full_prompt(prompt_products)
 
     st.markdown("### 전체 자료 (전 제품 × MFDS 원문 + HIRA 약가정보 + 비교표)")
-    cp1, cp2 = st.columns([1, 1])
-    with cp1:
-        copy_button(full_prompt, "📋 Claude용 전체 자료 복사")
-    with cp2:
-        st.download_button(
-            "⬇️ 프롬프트 TXT 저장",
-            data=full_prompt.encode("utf-8"),
-            file_name=f"Claude_검증자료_{review_date.isoformat()}.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
+    copy_button(full_prompt, "📋 [Claude용 전체 자료 복사]")
     with st.expander("전체 자료 미리보기"):
         st.code(full_prompt)
 
@@ -1245,51 +1068,19 @@ if _SS.get("products") and _SS.get("pairs"):
     st.divider()
     st.markdown("### Claude 검증 결과 재붙여넣기")
     st.caption("Claude 웹에서 받은 마크다운 표(`| 제품 | 항목 | 판단 | 이유 | 원문 근거 |`) 또는 JSON(`{\"results\":[...]}`)을 붙여넣으면 결과 표로 렌더링합니다.")
-    claude_out = st.text_area(
-        "Claude 결과 붙여넣기",
-        height=220,
-        key="claude_result",
-        placeholder="Claude 웹에서 검증한 마크다운 표 또는 JSON을 붙여넣으세요.",
-    )
-    if st.button("🔎 Claude 결과 분석", type="primary", key="parse_result_btn"):
+    claude_out = st.text_area("Claude 결과 붙여넣기", height=200, key="claude_result")
+    if st.button("결과 표로 렌더링", key="parse_result_btn"):
         parsed = result_parser.parse_result(claude_out)
         if parsed["ok"]:
             rdf = pd.DataFrame(parsed["rows"])
-            _SS["claude_result_df"] = rdf
-            _SS["claude_result_raw"] = claude_out
-            st.success(f"{len(rdf):,}건의 Claude 판정 결과를 불러왔습니다.")
+            try:
+                st.dataframe(rdf.style.map(status_color_rule, subset=["판단"]), use_container_width=True)
+            except AttributeError:
+                st.dataframe(rdf.style.applymap(status_color_rule, subset=["판단"]), use_container_width=True)
         else:
             st.error(parsed["error"])
+            st.markdown("**입력 원문 (그대로)**")
             st.code(claude_out)
-
-    if _SS.get("claude_result_df") is not None:
-        rdf = _SS["claude_result_df"]
-        if "판단" in rdf.columns:
-            counts = rdf["판단"].astype(str).value_counts()
-            c1, c2, c3, c4, c5 = st.columns(5)
-            for col, label in zip((c1,c2,c3,c4,c5), ("일치","표현차이","확인필요","수정필요","확인불가")):
-                col.metric(label, int(counts.get(label, 0)))
-        try:
-            st.dataframe(rdf.style.map(status_color_rule, subset=["판단"]), use_container_width=True, height=520)
-        except AttributeError:
-            st.dataframe(rdf.style.applymap(status_color_rule, subset=["판단"]), use_container_width=True, height=520)
-        e1, e2 = st.columns(2)
-        with e1:
-            st.download_button(
-                "⬇️ Claude 판정 Excel",
-                data=make_excel_bytes(rdf),
-                file_name=f"Claude_검증결과_{review_date.isoformat()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        with e2:
-            st.download_button(
-                "⬇️ Claude 판정 CSV",
-                data=rdf.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"Claude_검증결과_{review_date.isoformat()}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
 else:
     st.caption("②~④ 단계를 먼저 완료하면 이곳에서 Claude용 검증 자료를 생성할 수 있습니다.")
 
@@ -1297,5 +1088,5 @@ st.divider()
 st.caption(
     "⚠️ 본 앱은 기계적으로 판별 가능한 항목(기본정보·숫자단위·약가)만 자동 판정합니다. "
     "의미 비교는 Claude 웹에서 수행하며, 본 앱은 그 자료를 생성·복사하는 역할만 합니다. "
-    "API 오류·캐시 부재 시 데이터를 임의로 생성하지 않습니다. API 인증키는 Streamlit Secrets에서만 읽습니다."
+    "API 오류·캐시 부재 시 데이터를 임의로 생성하지 않습니다."
 )
