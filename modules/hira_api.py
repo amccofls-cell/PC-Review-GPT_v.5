@@ -15,6 +15,7 @@ v4.1 변경점:
 import re
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
 
 import requests
 
@@ -61,6 +62,34 @@ def _extract_items(body):
     return []
 
 
+def _xml_to_payload(text):
+    """
+    HIRA XML 응답을 JSON 봉투와 동일한 dict 로 변환한다.
+    - 성공: <response><header><resultCode>00</resultCode><resultMsg>NORMAL SERVICE.</resultMsg></header>
+            <body><items><item>...</item></items><totalCount>n</totalCount></body></response>
+    - 오류: <OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>...</errMsg>...</cmmMsgHeader></OpenAPI_ServiceResponse>
+    (검증용 Colab 스크립트의 .//resultCode / .//items/item 경로와 동일)
+    """
+    root = ET.fromstring(text)
+    cmm = root.find(".//cmmMsgHeader")
+    if cmm is not None:
+        return {"OpenAPI_ServiceResponse": {"cmmMsgHeader": {child.tag: (child.text or "").strip() for child in cmm}}}
+    header = {}
+    hdr = root.find(".//header")
+    if hdr is not None:
+        header = {child.tag: (child.text or "").strip() for child in hdr}
+    body = {}
+    total = root.findtext(".//totalCount")
+    if total is not None:
+        try:
+            body["totalCount"] = int(total.strip() or 0)
+        except ValueError:
+            body["totalCount"] = 0
+    items = [{child.tag: (child.text or "").strip() for child in it} for it in root.findall(".//items/item")]
+    body["items"] = {"item": items} if items else {}
+    return {"header": header, "body": body}
+
+
 def _get_json(params, timeout=30, retries=3):
     params = dict(params)
     params.setdefault("type", "json")
@@ -76,12 +105,23 @@ def _get_json(params, timeout=30, retries=3):
                 time.sleep(1.5 * (attempt + 1))
     if resp is None:
         raise HiraApiError(f"HIRA 서버에 연결하지 못했습니다 (HTTPS, {retries}회 시도): {last_exc}")
-    try:
-        data = resp.json()
-    except ValueError:
-        m = re.search(r"<resultMsg>([^<]+)</resultMsg>", resp.text)
-        msg = m.group(1) if m else resp.text[:200]
-        raise HiraApiError(f"HIRA 응답을 해석하지 못했습니다(인증키 오류 또는 서비스 점검 가능): {msg}")
+    text = resp.text.strip()
+    data = None
+    if text.startswith("{") or text.startswith("["):
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+    if data is None and text.startswith("<"):
+        # HIRA(dgamtCrtrInfoService1.2)는 type=json 이어도 "성공" 응답이 XML로 오는 경우가 있다.
+        # resultCode 00 + NORMAL SERVICE. 인데 JSON 파싱만 시도하면
+        # "해석하지 못했습니다: NORMAL SERVICE." 로 오분류되던 것을 수정 (v4.3.4).
+        try:
+            data = _xml_to_payload(text)
+        except ET.ParseError as exc:
+            raise HiraApiError(f"HIRA XML 응답 파싱 실패: {exc} — 원문 앞부분: {text[:200]}")
+    if data is None:
+        raise HiraApiError(f"HIRA 응답 형식을 확인할 수 없습니다(HTTP {resp.status_code}). 원문 앞부분: {text[:200]}")
     if not isinstance(data, dict):
         raise HiraApiError("HIRA 응답 형식이 올바르지 않습니다.")
     # data.go.kr 오류 봉투: {"OpenAPI_ServiceResponse":{"cmmMsgHeader":{...}}}
@@ -95,8 +135,8 @@ def _get_json(params, timeout=30, retries=3):
             reason = hdr.get("returnReasonCode") or ""
             raise HiraApiError(f"HIRA API 오류 (resultCode={reason}): {auth or err} ({err})")
     header = data.get("header") or {}
-    code = header.get("resultCode")
-    if str(code) not in ("00", "0", "200"):
+    code = str(header.get("resultCode") or "").strip()
+    if code and code not in ("00", "0", "200"):
         msg = header.get("resultMsg") or "알 수 없는 오류"
         raise HiraApiError(f"HIRA API 오류 (resultCode={code}): {msg}")
     return data
